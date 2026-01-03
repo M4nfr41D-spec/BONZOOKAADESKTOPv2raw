@@ -362,6 +362,10 @@ html, body {
 }
 
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.6; } }
+@keyframes floatUp { 
+  0% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(-50px); opacity: 0; }
+}
 
 #announcement {
   position: absolute;
@@ -709,6 +713,138 @@ html, body {
 }
 
 /* ================================================================
+   HUB MODAL (Space Station)
+   ================================================================ */
+.hub-modal {
+  min-width: 500px;
+  max-width: 600px;
+}
+
+.hub-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.hub-header h1 {
+  font-size: 28px;
+  margin: 0;
+}
+
+.hub-stats {
+  display: flex;
+  gap: 15px;
+}
+
+.hub-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-panel-inner);
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--gold);
+}
+
+.hub-stat .icon {
+  font-size: 16px;
+}
+
+.act-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 5px;
+  margin-bottom: 20px;
+}
+
+.act-card {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  background: linear-gradient(135deg, var(--bg-panel) 0%, var(--bg-dark) 100%);
+  border: 1px solid var(--cyan);
+  border-radius: 8px;
+  padding: 15px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.act-card:hover {
+  border-color: var(--primary);
+  transform: translateX(5px);
+  box-shadow: 0 0 20px var(--cyan-glow);
+}
+
+.act-card.locked {
+  border-color: #333;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.act-card.locked:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.act-card.completed {
+  border-color: var(--success);
+}
+
+.act-card.completed:hover {
+  box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
+}
+
+.act-icon {
+  font-size: 32px;
+  width: 50px;
+  text-align: center;
+}
+
+.act-info {
+  flex: 1;
+}
+
+.act-info h3 {
+  margin: 0 0 4px;
+  color: var(--text-bright);
+  font-size: 16px;
+}
+
+.act-info p {
+  margin: 0 0 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.act-meta {
+  display: flex;
+  gap: 15px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.act-meta .locked-text {
+  color: var(--danger);
+  font-weight: bold;
+}
+
+.hub-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ================================================================
    VENDOR
    ================================================================ */
 .vendor-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 20px 0; }
@@ -832,7 +968,38 @@ html, body {
 <!-- TOOLTIP -->
 <div id="tooltip"></div>
 
-<!-- START MODAL -->
+<!-- HUB MODAL (Space Station) -->
+<div class="modal-overlay" id="hubModal">
+  <div class="modal hub-modal">
+    <div class="panel">
+      <div class="panel-inner">
+        <div class="hub-header">
+          <h1>🛸 SPACE STATION</h1>
+          <div class="hub-stats">
+            <div class="hub-stat"><span class="icon">🔩</span><span id="hubScrap">0</span></div>
+            <div class="hub-stat"><span class="icon">⭐</span>LVL <span id="hubLevel">1</span></div>
+          </div>
+        </div>
+        
+        <div class="glow-divider"></div>
+        
+        <h3 style="margin: 15px 0 10px; color: var(--primary);">SELECT MISSION</h3>
+        <div class="act-list" id="actList">
+          <!-- Acts rendered by JS -->
+        </div>
+        
+        <div class="hub-buttons">
+          <button class="btn" onclick="document.getElementById('sidePanel').classList.add('open')">📦 INVENTORY</button>
+          <button class="btn" onclick="document.getElementById('pilotPanel').classList.add('open')">👨‍🚀 PILOT</button>
+          <button class="btn small" onclick="Game.debugAddResources()">+Debug</button>
+          <button class="btn small" onclick="Game.debugUnlockAll()">🔓All</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- START MODAL (Legacy - hidden in exploration mode) -->
 <div class="modal-overlay active" id="startModal">
   <div class="modal">
     <div class="panel">
@@ -870,7 +1037,7 @@ html, body {
           <div class="modal-stat"><span class="label">XP</span><span class="value purple" id="deathXP">0</span></div>
         </div>
         <button class="btn primary" onclick="Game.restart()">TRY AGAIN</button>
-        <button class="btn" onclick="Game.toMenu()">MENU</button>
+        <button class="btn" onclick="Game.toHub()">HUB</button>
       </div>
     </div>
   </div>

@@ -1,6 +1,7 @@
 // ============================================================
-// MAIN.js - Desktop Game Controller
+// MAIN.js - BONZOOKAA Exploration Mode
 // ============================================================
+// Diablo-style exploration with hub, acts, and boss portals
 
 import { State, resetRun, resetPlayer } from './runtime/State.js';
 import { loadAllData } from './runtime/DataLoader.js';
@@ -16,6 +17,12 @@ import { Particles } from './runtime/Particles.js';
 import { Input } from './runtime/Input.js';
 import { UI } from './runtime/UI.js';
 
+// World System
+import { Camera } from './runtime/world/Camera.js';
+import { World } from './runtime/world/World.js';
+import { SceneManager } from './runtime/world/SceneManager.js';
+import { SeededRandom } from './runtime/world/SeededRandom.js';
+
 // ============================================================
 // GAME CONTROLLER
 // ============================================================
@@ -24,10 +31,18 @@ const Game = {
   canvas: null,
   ctx: null,
   lastTime: 0,
-  stars: [],
+  
+  // Screen dimensions
+  screenW: 800,
+  screenH: 600,
+  
+  // Game mode
+  mode: 'exploration', // 'exploration' or 'waves' (legacy)
+  
+  // ========== INITIALIZATION ==========
   
   async init() {
-    console.log('🚀 BONZOOKAA Desktop initializing...');
+    console.log('🚀 BONZOOKAA Exploration Mode initializing...');
     
     // Setup canvas
     this.canvas = document.getElementById('gameCanvas');
@@ -41,49 +56,46 @@ const Game = {
     // Load save
     Save.load();
     
+    // Register modules in State for cross-module access
+    State.modules = {
+      Save, Stats, Leveling, Items, Player, 
+      Enemies, Bullets, Pickups, Particles, UI,
+      Camera, World, SceneManager
+    };
+    
     // Initialize systems
     Input.init(this.canvas);
     UI.init();
+    Camera.init(0, 0);
+    SceneManager.init();
     
     // Calculate stats
     Stats.calculate();
-    
-    // Create stars
-    this.initStars();
     
     // Add starter items if new
     if (State.meta.stash.length === 0) {
       this.addStarterItems();
     }
     
-    // Update start screen
-    this.updateStartModal();
+    // Initialize act unlocks
+    this.initActUnlocks();
+    
+    // Show hub
+    this.showHub();
     
     // Start loop
     this.lastTime = performance.now();
     requestAnimationFrame((t) => this.loop(t));
     
-    console.log('✅ Desktop version ready');
+    console.log('✅ Exploration mode ready');
   },
   
   resize() {
     const container = document.getElementById('gameContainer');
     this.canvas.width = container.clientWidth;
     this.canvas.height = container.clientHeight;
-    this.initStars();
-  },
-  
-  initStars() {
-    this.stars = [];
-    for (let i = 0; i < 120; i++) {
-      this.stars.push({
-        x: Math.random() * this.canvas.width,
-        y: Math.random() * this.canvas.height,
-        size: Math.random() * 2 + 0.5,
-        speed: Math.random() * 40 + 15,
-        brightness: Math.random() * 0.5 + 0.3
-      });
-    }
+    this.screenW = this.canvas.width;
+    this.screenH = this.canvas.height;
   },
   
   addStarterItems() {
@@ -104,25 +116,42 @@ const Game = {
     UI.renderAll();
   },
   
-  // Main loop
+  initActUnlocks() {
+    // Ensure act unlock state exists
+    if (!State.meta.actsUnlocked) {
+      State.meta.actsUnlocked = { act1: true };
+    }
+    // Sync with acts.json unlocked flags
+    const acts = State.data.acts;
+    if (acts) {
+      for (const [actId, actData] of Object.entries(acts)) {
+        if (actData.unlocked && !State.meta.actsUnlocked[actId]) {
+          State.meta.actsUnlocked[actId] = true;
+        }
+      }
+    }
+  },
+  
+  // ========== MAIN LOOP ==========
+  
   loop(time) {
     try {
       const dt = Math.min((time - this.lastTime) / 1000, 0.05);
       this.lastTime = time;
       
-      // Clear
-      this.ctx.fillStyle = '#050810';
-      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      // Update scene transitions
+      SceneManager.updateTransition(dt);
       
-      // Stars always
-      this.updateStars(dt);
-      this.drawStars();
+      // Scene-specific updates
+      const scene = SceneManager.getScene();
       
-      // Game logic
-      if (State.run.active && !State.ui.paused) {
-        this.update(dt);
-        this.draw();
+      if (scene === 'combat' && !State.ui.paused) {
+        this.updateCombat(dt);
       }
+      
+      // Always render
+      this.render(dt);
+      
     } catch (error) {
       console.error('❌ Error in game loop:', error);
     }
@@ -130,102 +159,352 @@ const Game = {
     requestAnimationFrame((t) => this.loop(t));
   },
   
-  update(dt) {
+  // ========== COMBAT UPDATE ==========
+  
+  updateCombat(dt) {
     State.run.stats.timeElapsed += dt;
     
-    Player.update(dt, this.canvas);
+    // Update camera to follow player
+    Camera.update(dt, this.screenW, this.screenH);
     
+    // Update world (proximity spawning)
+    World.update(dt);
+    
+    // Update player
+    Player.update(dt, this.canvas, true); // true = exploration mode
+    
+    // Check death
     if (Player.isDead()) {
       this.onDeath();
       return;
     }
     
+    // Update enemies (pass camera offset)
     Enemies.update(dt, this.canvas);
+    
+    // Update bullets
     Bullets.update(dt, this.canvas);
+    
+    // Update pickups
     Pickups.update(dt, this.canvas);
+    
+    // Update particles
     Particles.update(dt);
     
-    // Wave complete
-    if (State.enemies.length === 0 && State.run.wave > 0) {
-      this.nextWave();
-    }
-    
+    // Update HUD
     this.updateHUD();
   },
   
-  draw() {
-    Pickups.draw(this.ctx);
-    Enemies.draw(this.ctx);
-    Bullets.draw(this.ctx);
-    Player.draw(this.ctx);
-    Particles.draw(this.ctx);
+  // ========== RENDERING ==========
+  
+  render(dt) {
+    const ctx = this.ctx;
+    const scene = SceneManager.getScene();
+    
+    // Clear
+    ctx.fillStyle = '#050810';
+    ctx.fillRect(0, 0, this.screenW, this.screenH);
+    
+    if (scene === 'combat' || scene === 'loading') {
+      this.renderCombat(ctx, dt);
+    }
+    
+    // Draw scene transitions on top
+    SceneManager.drawTransition(ctx, this.screenW, this.screenH);
   },
   
-  updateStars(dt) {
-    for (const s of this.stars) {
-      s.y += s.speed * dt;
-      if (s.y > this.canvas.height) {
-        s.y = 0;
-        s.x = Math.random() * this.canvas.width;
+  renderCombat(ctx, dt) {
+    // Draw parallax background (world coords)
+    World.drawParallax(ctx, this.screenW, this.screenH);
+    
+    // Apply camera transform for world objects
+    ctx.save();
+    Camera.applyTransform(ctx);
+    
+    // Draw world elements (obstacles, decorations, exits, portals)
+    World.draw(ctx, this.screenW, this.screenH);
+    
+    // Draw pickups
+    Pickups.draw(ctx);
+    
+    // Draw enemies
+    Enemies.draw(ctx);
+    
+    // Draw bullets
+    Bullets.draw(ctx);
+    
+    // Draw player
+    Player.draw(ctx);
+    
+    // Draw particles
+    Particles.draw(ctx);
+    
+    // Reset camera transform
+    Camera.resetTransform(ctx);
+    ctx.restore();
+    
+    // Draw screen-space UI (minimap, etc)
+    this.drawMinimap(ctx);
+  },
+  
+  // ========== MINIMAP ==========
+  
+  drawMinimap(ctx) {
+    const zone = World.currentZone;
+    if (!zone) return;
+    
+    const mapSize = 120;
+    const mapX = this.screenW - mapSize - 10;
+    const mapY = 10;
+    const scale = mapSize / Math.max(zone.width, zone.height);
+    
+    // Background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(mapX, mapY, mapSize, mapSize);
+    ctx.strokeStyle = '#00aaff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(mapX, mapY, mapSize, mapSize);
+    
+    // Map bounds
+    const zoneW = zone.width * scale;
+    const zoneH = zone.height * scale;
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(mapX, mapY, zoneW, zoneH);
+    
+    // Enemies (green dots)
+    ctx.fillStyle = '#44aa44';
+    for (const spawn of zone.enemySpawns) {
+      if (!spawn.killed) {
+        ctx.fillRect(
+          mapX + spawn.x * scale - 1,
+          mapY + spawn.y * scale - 1,
+          2, 2
+        );
       }
     }
+    
+    // Elites (yellow dots)
+    ctx.fillStyle = '#ffaa00';
+    for (const spawn of zone.eliteSpawns) {
+      if (!spawn.killed) {
+        ctx.fillRect(
+          mapX + spawn.x * scale - 2,
+          mapY + spawn.y * scale - 2,
+          4, 4
+        );
+      }
+    }
+    
+    // Boss (red dot)
+    if (zone.bossSpawn && !zone.bossSpawn.killed) {
+      ctx.fillStyle = '#ff3355';
+      ctx.fillRect(
+        mapX + zone.bossSpawn.x * scale - 3,
+        mapY + zone.bossSpawn.y * scale - 3,
+        6, 6
+      );
+    }
+    
+    // Exit (orange)
+    if (zone.exit) {
+      ctx.fillStyle = '#ff8800';
+      ctx.fillRect(
+        mapX + zone.exit.x * scale - 3,
+        mapY + zone.exit.y * scale - 3,
+        6, 6
+      );
+    }
+    
+    // Portals (yellow pulse)
+    ctx.fillStyle = '#ffdd00';
+    for (const portal of zone.portals) {
+      ctx.fillRect(
+        mapX + portal.x * scale - 4,
+        mapY + portal.y * scale - 4,
+        8, 8
+      );
+    }
+    
+    // Player (cyan dot)
+    ctx.fillStyle = '#00ffff';
+    ctx.fillRect(
+      mapX + State.player.x * scale - 3,
+      mapY + State.player.y * scale - 3,
+      6, 6
+    );
+    
+    // Viewport rectangle
+    const camX = Camera.getX();
+    const camY = Camera.getY();
+    ctx.strokeStyle = 'rgba(0, 170, 255, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(
+      mapX + camX * scale,
+      mapY + camY * scale,
+      this.screenW * scale,
+      this.screenH * scale
+    );
+    
+    // Zone label
+    ctx.fillStyle = '#aaa';
+    ctx.font = '10px Orbitron';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Zone ${World.zoneIndex + 1}`, mapX + 4, mapY + mapSize - 4);
   },
   
-  drawStars() {
-    for (const s of this.stars) {
-      this.ctx.fillStyle = `rgba(255,255,255,${s.brightness})`;
-      this.ctx.beginPath();
-      this.ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
-      this.ctx.fill();
+  // ========== HUB ==========
+  
+  showHub() {
+    SceneManager.goToHub();
+    this.hideModal('startModal');
+    this.showModal('hubModal');
+    this.renderHubUI();
+  },
+  
+  renderHubUI() {
+    // Update hub stats
+    const scrapEl = document.getElementById('hubScrap');
+    const levelEl = document.getElementById('hubLevel');
+    const actsEl = document.getElementById('actList');
+    
+    if (scrapEl) scrapEl.textContent = State.meta.scrap;
+    if (levelEl) levelEl.textContent = State.meta.level;
+    
+    // Render act list
+    if (actsEl) {
+      const acts = State.data.acts;
+      if (!acts) {
+        actsEl.innerHTML = '<p>No acts loaded</p>';
+        return;
+      }
+      
+      let html = '';
+      for (const [actId, act] of Object.entries(acts)) {
+        const unlocked = State.meta.actsUnlocked?.[actId] || false;
+        const completed = State.meta.actsCompleted?.[actId] || false;
+        
+        html += `
+          <div class="act-card ${unlocked ? '' : 'locked'} ${completed ? 'completed' : ''}"
+               onclick="${unlocked ? `Game.startAct('${actId}')` : ''}">
+            <div class="act-icon">${completed ? '✅' : (unlocked ? '🚀' : '🔒')}</div>
+            <div class="act-info">
+              <h3>${act.name}</h3>
+              <p>${act.description || ''}</p>
+              <div class="act-meta">
+                <span>${act.zones || 3} Zones</span>
+                ${!unlocked ? '<span class="locked-text">LOCKED</span>' : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+      actsEl.innerHTML = html;
     }
+    
+    // Update UI panels
+    UI.renderAll();
   },
   
   // ========== GAME FLOW ==========
   
-  start() {
-    console.log('🎮 Game.start() called');
+  startAct(actId) {
+    console.log(`🎮 Starting ${actId}...`);
     
-    try {
-      resetRun();
-      State.run.active = true;
-      State.run.wave = 0;
-      
-      Stats.calculate();
-      Stats.initializeHP();
-      
-      resetPlayer(this.canvas.width, this.canvas.height);
-      
-      this.hideModal('startModal');
-      this.nextWave();
-      
-      UI.renderAll();
-      
-      console.log('✅ Game started successfully');
-    } catch (error) {
-      console.error('❌ Error starting game:', error);
-    }
-  },
-  
-  nextWave() {
-    State.run.wave++;
+    // Generate seed (can be customized)
+    const seed = SeededRandom.fromString(actId + '_' + Date.now());
     
-    // Vendor check
-    const cfg = State.data.config?.waves;
-    const vendorStart = cfg?.vendorStart || 5;
-    const vendorInterval = cfg?.vendorInterval || 10;
+    // Hide hub modal
+    this.hideModal('hubModal');
     
-    if (State.run.wave > vendorStart && (State.run.wave - vendorStart) % vendorInterval === 0) {
-      this.openVendor();
-      return;
-    }
+    // Reset run state
+    resetRun();
+    State.run.active = true;
+    State.run.currentAct = actId;
+    
+    // Calculate stats and init HP
+    Stats.calculate();
+    Stats.initializeHP();
+    
+    // Start the act via SceneManager
+    SceneManager.startAct(actId, seed);
     
     // Announce
-    const isBoss = State.run.wave % 20 === 0;
-    this.announce(isBoss ? `👑 BOSS WAVE ${State.run.wave}` : `WAVE ${State.run.wave}`, isBoss ? 'boss' : '');
+    const actName = State.data.acts?.[actId]?.name || actId;
+    this.announce(`⚔️ ${actName.toUpperCase()}`, 'boss');
     
-    Enemies.spawnWave(State.run.wave, this.canvas.width);
-    this.updateHUD();
+    UI.renderAll();
   },
+  
+  returnToHub() {
+    SceneManager.returnToHub('portal');
+    
+    // Add earned resources
+    State.meta.scrap += State.run.scrapEarned;
+    
+    Save.save();
+    
+    setTimeout(() => {
+      this.showHub();
+    }, 600);
+  },
+  
+  onBossKilled(actId) {
+    // Mark act as completed
+    if (!State.meta.actsCompleted) State.meta.actsCompleted = {};
+    State.meta.actsCompleted[actId] = true;
+    
+    // Unlock next acts from rewards
+    const actData = State.data.acts?.[actId];
+    if (actData?.rewards?.unlocks) {
+      for (const unlockId of actData.rewards.unlocks) {
+        State.meta.actsUnlocked[unlockId] = true;
+      }
+    }
+    
+    // Add completion bonus
+    if (actData?.rewards?.completionScrap) {
+      State.run.scrapEarned += actData.rewards.completionScrap;
+    }
+    
+    Save.save();
+    
+    this.announce('✨ ACT COMPLETE!', 'boss');
+  },
+  
+  onDeath() {
+    State.run.active = false;
+    
+    // Add earnings (partial)
+    State.meta.scrap += Math.floor(State.run.scrapEarned * 0.5);
+    State.meta.totalRuns++;
+    State.meta.totalKills += State.run.stats.kills;
+    State.meta.totalPlaytime += State.run.stats.timeElapsed;
+    
+    Save.save();
+    
+    // Update death modal
+    document.getElementById('deathWave').textContent = `Zone ${World.zoneIndex + 1}`;
+    document.getElementById('deathKills').textContent = State.run.stats.kills;
+    document.getElementById('deathDmg').textContent = this.formatNumber(State.run.stats.damageDealt);
+    document.getElementById('deathTime').textContent = this.formatTime(State.run.stats.timeElapsed);
+    document.getElementById('deathScrapEarned').textContent = Math.floor(State.run.scrapEarned * 0.5);
+    document.getElementById('deathXP').textContent = State.run.xpEarned;
+    
+    this.showModal('deathModal');
+  },
+  
+  restart() {
+    this.hideModal('deathModal');
+    this.startAct(State.run.currentAct || 'act1');
+  },
+  
+  toHub() {
+    this.hideModal('deathModal');
+    this.showHub();
+  },
+  
+  // ========== VENDOR ==========
   
   openVendor() {
     State.ui.paused = true;
@@ -238,45 +517,6 @@ const Game = {
     State.ui.paused = false;
     Stats.calculate();
     UI.renderShipStats();
-    this.nextWave();
-  },
-  
-  onDeath() {
-    State.run.active = false;
-    
-    // Add earnings
-    State.meta.scrap += State.run.scrapEarned;
-    State.meta.totalRuns++;
-    State.meta.totalKills += State.run.stats.kills;
-    State.meta.totalPlaytime += State.run.stats.timeElapsed;
-    
-    if (State.run.wave > State.meta.highestWave) {
-      State.meta.highestWave = State.run.wave;
-    }
-    
-    Save.save();
-    
-    // Update death modal
-    document.getElementById('deathWave').textContent = State.run.wave;
-    document.getElementById('deathKills').textContent = State.run.stats.kills;
-    document.getElementById('deathDmg').textContent = this.formatNumber(State.run.stats.damageDealt);
-    document.getElementById('deathTime').textContent = this.formatTime(State.run.stats.timeElapsed);
-    document.getElementById('deathScrapEarned').textContent = State.run.scrapEarned;
-    document.getElementById('deathXP').textContent = State.run.xpEarned;
-    
-    this.showModal('deathModal');
-  },
-  
-  restart() {
-    this.hideModal('deathModal');
-    this.start();
-  },
-  
-  toMenu() {
-    this.hideModal('deathModal');
-    this.updateStartModal();
-    this.showModal('startModal');
-    UI.renderAll();
   },
   
   // ========== UI HELPERS ==========
@@ -286,21 +526,25 @@ const Game = {
     if (el) {
       el.textContent = text;
       el.className = 'show ' + type;
-      setTimeout(() => el.className = '', 2000);
+      setTimeout(() => el.className = '', 2500);
     }
   },
   
   updateHUD() {
     const p = State.player;
+    const zone = World.currentZone;
     
     document.getElementById('hudCells').textContent = State.run.cells;
     document.getElementById('hudScrap').textContent = State.meta.scrap + State.run.scrapEarned;
     document.getElementById('levelBadge').textContent = State.meta.level;
-    document.getElementById('waveDisplay').textContent = `WAVE ${State.run.wave}`;
+    
+    // Show zone instead of wave
+    const zoneText = zone?.isBossZone ? '⚠️ BOSS' : `ZONE ${World.zoneIndex + 1}`;
+    document.getElementById('waveDisplay').textContent = zoneText;
     
     // XP
     const xpProgress = Leveling.getProgress();
-    const xpNeeded = Leveling.getXPForLevel(State.meta.level);
+    const xpNeeded = Leveling.xpForLevel(State.meta.level);
     document.getElementById('xpBar').style.width = (xpProgress * 100) + '%';
     document.getElementById('xpText').textContent = `${State.meta.xp} / ${xpNeeded} XP`;
     
@@ -315,13 +559,6 @@ const Game = {
     const shPct = p.maxShield > 0 ? (p.shield / p.maxShield) * 100 : 0;
     document.getElementById('shieldBar').style.width = shPct + '%';
     document.getElementById('shieldText').textContent = `${Math.ceil(p.shield)}/${Math.round(p.maxShield)}`;
-  },
-  
-  updateStartModal() {
-    document.getElementById('startScrap').textContent = State.meta.scrap;
-    document.getElementById('startLevel').textContent = State.meta.level;
-    document.getElementById('startWave').textContent = State.meta.highestWave;
-    document.getElementById('startRuns').textContent = State.meta.totalRuns;
   },
   
   showModal(id) {
@@ -351,8 +588,27 @@ const Game = {
     State.meta.statPoints += 20;
     State.run.cells += 500;
     Save.save();
-    this.updateStartModal();
     UI.renderAll();
+    this.renderHubUI();
+  },
+  
+  debugUnlockAll() {
+    const acts = State.data.acts;
+    if (acts) {
+      for (const actId of Object.keys(acts)) {
+        State.meta.actsUnlocked[actId] = true;
+      }
+    }
+    Save.save();
+    this.renderHubUI();
+    console.log('🔓 All acts unlocked');
+  },
+  
+  debugTeleport(zoneIndex) {
+    if (World.currentZone) {
+      World.loadZone(zoneIndex);
+      console.log(`📍 Teleported to zone ${zoneIndex}`);
+    }
   },
   
   // ========== FORMATTING ==========
@@ -370,8 +626,8 @@ const Game = {
   }
 };
 
-// Global
+// Global access
 window.Game = Game;
 
-// Init
+// Init on DOM ready
 document.addEventListener('DOMContentLoaded', () => Game.init());
