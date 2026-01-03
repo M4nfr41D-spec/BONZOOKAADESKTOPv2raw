@@ -9,20 +9,32 @@ import { Particles } from './Particles.js';
 
 export const Player = {
   
-  update(dt, canvas) {
+  update(dt, canvas, explorationMode = false) {
     const p = State.player;
+    const cfg = State.data.config?.player || {};
     
     // ========== MOVEMENT (WASD) ==========
     const move = Input.getMovement();
     
-    const targetVX = move.dx * p.speed;
-    const targetVY = move.dy * p.speed;
+    // Config-driven movement (defaults for snappy feel)
+    const accel = cfg.acceleration || 3000;
+    const friction = cfg.friction || 0.75;
+    const deadzone = cfg.deadzone || 0.1;
     
-    // Smooth acceleration
-    const accel = 1200;
-    const smoothing = Math.min(1, accel * dt / p.speed);
-    p.vx += (targetVX - p.vx) * smoothing;
-    p.vy += (targetVY - p.vy) * smoothing;
+    if (Math.abs(move.dx) > deadzone || Math.abs(move.dy) > deadzone) {
+      // Accelerate towards target
+      const targetVX = move.dx * p.speed;
+      const targetVY = move.dy * p.speed;
+      p.vx += (targetVX - p.vx) * Math.min(1, accel * dt / p.speed);
+      p.vy += (targetVY - p.vy) * Math.min(1, accel * dt / p.speed);
+    } else {
+      // Apply friction when no input (quick stop)
+      p.vx *= friction;
+      p.vy *= friction;
+      // Snap to zero if very slow
+      if (Math.abs(p.vx) < 5) p.vx = 0;
+      if (Math.abs(p.vy) < 5) p.vy = 0;
+    }
     
     // Apply velocity
     p.x += p.vx * dt;
@@ -30,11 +42,33 @@ export const Player = {
     
     // Boundary clamping
     const margin = p.radius + 5;
-    p.x = Math.max(margin, Math.min(canvas.width - margin, p.x));
-    p.y = Math.max(margin, Math.min(canvas.height - margin, p.y));
+    
+    if (explorationMode) {
+      // Exploration mode: clamp to world/zone boundaries
+      const zone = State.world?.currentZone;
+      if (zone) {
+        p.x = Math.max(margin, Math.min(zone.width - margin, p.x));
+        p.y = Math.max(margin, Math.min(zone.height - margin, p.y));
+      }
+    } else {
+      // Wave mode: clamp to canvas boundaries
+      p.x = Math.max(margin, Math.min(canvas.width - margin, p.x));
+      p.y = Math.max(margin, Math.min(canvas.height - margin, p.y));
+    }
     
     // ========== AIM (Mouse) ==========
-    p.angle = Input.getAimAngle(p.x, p.y);
+    // In exploration mode, convert screen mouse to world coords
+    if (explorationMode) {
+      const Camera = State.modules?.Camera;
+      if (Camera) {
+        const worldMouse = Camera.screenToWorld(State.input.mouseX, State.input.mouseY);
+        p.angle = Math.atan2(worldMouse.y - p.y, worldMouse.x - p.x);
+      } else {
+        p.angle = Input.getAimAngle(p.x, p.y);
+      }
+    } else {
+      p.angle = Input.getAimAngle(p.x, p.y);
+    }
     
     // ========== SHOOTING ==========
     p.fireCooldown -= dt;

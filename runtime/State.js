@@ -13,7 +13,34 @@ export const State = {
     pilotStats: null,
     enemies: null,
     runUpgrades: null,
-    slots: null
+    slots: null,
+    acts: {}  // Act configurations
+  },
+  
+  // Module references (set during init)
+  modules: {
+    UI: null,
+    Stats: null,
+    Save: null,
+    Items: null,
+    Enemies: null,
+    Bullets: null,
+    Particles: null,
+    Pickups: null,
+    Leveling: null,
+    World: null,
+    Camera: null,
+    SceneManager: null
+  },
+  
+  // Current scene
+  scene: 'hub', // 'hub', 'combat', 'loading', 'gameover'
+  
+  // World state (for exploration mode)
+  world: {
+    currentZone: null,
+    currentAct: null,
+    zoneIndex: 0
   },
   
   // Persistent meta progress (saved to localStorage)
@@ -30,12 +57,16 @@ export const State = {
     highestWave: 0,
     totalRuns: 0,
     totalKills: 0,
-    totalPlaytime: 0
+    totalPlaytime: 0,
+    actsCompleted: [], // ['act1', 'act2', ...]
+    actsUnlocked: ['act1'] // Acts available to play
   },
   
   // Current run state (reset each run)
   run: {
     active: false,
+    inCombat: false,
+    currentAct: null,
     wave: 0,
     cells: 0,
     scrapEarned: 0,
@@ -45,7 +76,11 @@ export const State = {
       kills: 0,
       damageDealt: 0,
       damageTaken: 0,
-      timeElapsed: 0
+      timeElapsed: 0,
+      timeStarted: 0,
+      itemsFound: 0,
+      elitesKilled: 0,
+      bossesKilled: 0
     }
   },
   
@@ -108,18 +143,34 @@ export const State = {
 export function resetRun() {
   State.run = {
     active: false,
+    inCombat: false,
+    currentAct: null,
     wave: 0,
     cells: 0,
     scrapEarned: 0,
     xpEarned: 0,
     upgrades: {},
-    stats: { kills: 0, damageDealt: 0, damageTaken: 0, timeElapsed: 0 }
+    stats: { 
+      kills: 0, 
+      damageDealt: 0, 
+      damageTaken: 0, 
+      timeElapsed: 0,
+      timeStarted: 0,
+      itemsFound: 0,
+      elitesKilled: 0,
+      bossesKilled: 0
+    }
   };
   State.bullets = [];
   State.enemyBullets = [];
   State.enemies = [];
   State.pickups = [];
   State.particles = [];
+  State.world = {
+    currentZone: null,
+    currentAct: null,
+    zoneIndex: 0
+  };
 }
 
 // Reset player position

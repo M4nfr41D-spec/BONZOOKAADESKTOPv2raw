@@ -14,12 +14,14 @@ const DATA_FILES = [
   'skills',
   'pilotStats',
   'runUpgrades',
-  'enemies'
+  'enemies',
+  'acts'
 ];
 
 export async function loadAllData() {
   console.log('📦 Loading game data...');
   
+  // Load main data files
   const promises = DATA_FILES.map(async (name) => {
     try {
       const response = await fetch(`./data/${name}.json`);
@@ -37,6 +39,7 @@ export async function loadAllData() {
   });
   
   const results = await Promise.all(promises);
+  
   const failed = results.filter(r => !r.success);
   
   if (failed.length > 0) {
